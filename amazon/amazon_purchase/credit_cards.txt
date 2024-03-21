@@ -1,0 +1,3 @@
+# seperate each column by ' , '  
+# card owner full name , card number , expiration month , expiration year
+Israel israeli , 425017003925394 , 11 , 29

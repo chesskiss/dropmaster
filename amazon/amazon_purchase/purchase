@@ -1,0 +1,194 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import Select
+from fake_useragent import UserAgent
+import pickle
+import time
+import os.path
+
+class Buyer():
+    def __init__(self) : #, country, name, tel, address, apt, city, state, zip):
+        self.amazon_user()
+        self.customer()
+        self.credit_card()
+    
+    def amazon_user(self):
+        try:
+            with  open("amazon_users.txt", "r") as credentials :
+                for line in credentials :
+                    if not line.startswith('#') :
+                        self.username, self.userpass = line.split(' , ')
+                        break
+            self.username += '\n'
+            self.userpass += '\n'
+        except:
+            print("no users found, enter manually...")
+            username = input("type in Amazon user email:")
+            userpass = input("type in Amazon password:")
+        # TODO : keep going over the lines if the first user isn't valid anymore
+
+    def customer(self) :
+        self.country = 'US'
+        self.name    = 'Maryana Kaliner'
+        self.tel     = '+18623299600'
+        self.address = '130 Sussex'
+        self.apt     = '3C'
+        self.city    = 'Jersey City'
+        self.state   = 'NJ'
+        self.zip     = '07302'
+        # TODO : merge with ebay
+
+    def credit_card(self):
+        try:
+            with  open("credit_cards.txt", "r") as credentials :
+                for line in credentials :
+                    if not line.startswith('#') :
+                        self.credit_name   , \
+                        self.credit_number , \
+                        self.credit_month  , \
+                        self.credit_year     = line.split(' , ')
+                        break
+        except:
+            print("no credit cards found, enter manually...")
+            self.credit_name   = input("type in credit name:")
+            self.credit_number = input("type in credit number:")
+            self.credit_month  = input("type in credit month:")
+            self.credit_year   = input("type in credit year:")
+            self.credit_cvc    = input("type in credit cvc")
+
+        # TODO : find a safer way to keep credit cards
+        
+
+def setup(buyer):
+    capabilities = DesiredCapabilities.CHROME
+    capabilities["goog:loggingPrefs"] = {"performance": "ALL"}
+    ser = Service(r"./chromedriver.exe")
+    op = Options()
+    userAgent = UserAgent().random # Used to help bypass bot checks
+    op.add_argument(f"user-agent={userAgent}") # Used to help bypass bot checks
+    op.add_argument("--disable-features=RendererCodeIntegrity")
+    driver = webdriver.Chrome(service=ser, options=op, desired_capabilities=capabilities)
+    driver.implicitly_wait(30) # Raise a TimeoutException after 10 seconds if elements on a page won't load
+    driver.set_page_load_timeout(30) # Raise a TimeoutException iff the page does not load after 15
+    # TODO : Handle thee 2 exceptions ...
+
+    load_cookies(driver, buyer)
+    
+    return driver
+
+
+def load_cookies(driver, buyer):
+    driver.get('https://www.amazon.com')
+    if os.path.isfile('amazon_cookies.pkl'):
+        with open('amazon_cookies.pkl', 'rb') as f:
+            cookies = pickle.load(f)
+            for cookie in cookies:
+                driver.add_cookie(cookie)
+        driver.refresh()
+    else :
+        amazonLogin(driver, buyer.username, buyer.userpass)
+        cookies = driver.get_cookies()
+        with open('amazon_cookies.pkl', 'wb') as f:
+            pickle.dump(cookies, f)
+    # TODO : Check cookies again with other accounts - didn't work second time (probably cause account suspended...)
+
+
+def amazonLogin(driver, user, password):
+    driver.get("https://www.amazon.com/")
+    time.sleep(1)
+    driver.find_element("xpath", "/html/body/div[1]/header/div/div[3]/div[13]/div[2]/a").click()
+    driver.find_element("name", "email").send_keys(user)
+    driver.find_element("name", "rememberMe").click() 
+    driver.find_element("name", "password").send_keys(password)
+    
+    #TODO 1 : skip "break free from password" button: //*[@id="ap-account-fixup-phone-skip-link"]
+    #TODO 2 : if doesn't work (recaptch...) make the code try again or use a different user and change IP, reset cookies...
+
+
+def addItemsToCart(driver, asins):
+    for item in asins:
+        url = "https://www.amazon.com/dp/" + item
+        driver.get(url)
+        driver.find_element("name", "submit.add-to-cart").click()
+
+    # !!! TODO !!! : How to make selenium ignore/handle "not found errors".
+    # TODO : when cannot find add to... try : driver.find_element("name", "submit.add-to-cart-ubb").click()
+    # TODO : add try: and exception for when ite unavailanle/out of stock...
+    # TODO : pick quantity
+
+
+def checkout(driver, buyer):
+    driver.get('https://www.amazon.com/gp/cart/view.html?ref_=nav_cart')
+    driver.find_element("name","proceedToRetailCheckout").click()
+    
+    fill_address(driver, buyer)
+    #fill_credit(driver, buyer)
+    time.sleep(120)
+    
+    # buy - driver.find_element("name",'placeYourOrder1').click()
+    time.sleep(20)
+
+    #TODO : Shipping and last options selection - (after prime account setup)
+
+
+def fill_address(driver, buyer):
+    driver.find_element('xpath', '//*[@id="addressChangeLinkId"]').click() # TODO : consider the scenerio when this is the first address <- check how name/xpath will look
+    driver.find_element('xpath', '//*[@id="add-new-address-popover-link"]').click() # TODO : Instead of new address - make it edit an existing one :
+    #driver.find_element('xpath', '//*[@id="address-list"]').click()
+
+    stiching = [ # For stiching buyer to elements:
+        [ buyer.name    , driver.find_element('name', 'address-ui-widgets-enterAddressFullName')    ],
+        [ buyer.tel     , driver.find_element('name', 'address-ui-widgets-enterAddressPhoneNumber') ],
+        [ buyer.address , driver.find_element('name', 'address-ui-widgets-enterAddressLine1')       ],
+        [ buyer.apt     , driver.find_element('name', 'address-ui-widgets-enterAddressLine2')       ],
+        [ buyer.city    , driver.find_element('name', 'address-ui-widgets-enterAddressCity')        ],
+        [ buyer.zip     , driver.find_element('name', 'address-ui-widgets-enterAddressPostalCode')  ]
+    ]
+    Select(driver.find_element('name', 'address-ui-widgets-countryCode')).select_by_value(buyer.country)
+    for field in stiching :
+        field[1].clear()
+        field[1].send_keys(field[0])
+    Select(driver.find_element('name', 'address-ui-widgets-enterAddressStateOrRegion')).select_by_value(buyer.state) 
+    driver.find_element("xpath",'//*[@id="address-ui-widgets-form-submit-button"]/span/input').click()
+
+    # TODO - Add select Billing address : //*[@id="shipToThisAddressButton"]/span/input
+
+def fill_credit(driver, buyer):
+    driver.find_element("xpath",'//*[@id="payChangeButtonId"]').click()
+
+
+    driver.find_element("xpath",'//*[@id="  ! CONSTANTLY CHANGES -> !  "]').click() # ->  pp-YzIEWk-100, pp-kcXnwA-100 ... # TODO : Find stable id/name... Ask a friend from Technion
+    driver.find_element("name", 'addCreditCardNumber').send_keys(buyer.credit_number) # TODO : Same- doesn't work... Name is stable but ID changes. Probably the fail cause.
+    driver.find_element("name", 'ppw-accountHolderName').send_keys(buyer.credit_name)
+    Select(driver.find_element("name", 'ppw-expirationDate_month')).select_by_value(buyer.credit_month)            
+    Select(driver.find_element("name", 'ppw-expirationDate_year')).select_by_value(buyer.credit_year)  
+    driver.find_element("name", 'ppw-widgetEvent:AddCreditCardEvent').click()
+
+    # TODO : add other payment options, e.g., promo code, payment plans...
+
+
+def main():
+    buyer = Buyer()
+    driver = setup(buyer)
+    
+
+    #addItemsToCart(driver, ["B0B21ZJCZ2"])    
+    checkout(driver, buyer)
+    
+    driver.quit()
+
+    #TODO ? : Add manuals for each function (needed inputs ?)
+    # TODO : Prime account
+
+if __name__ == '__main__':
+    main()
+
+'''
+Optional attributes that might be useful in the future:
+in setup, instead of Options() : 
+    op = webdriver.ChromeOptions()
+    driver = webdriver.Chrome(service=ser, options=op) #launches a new Chrome browser window.
+
+'''
